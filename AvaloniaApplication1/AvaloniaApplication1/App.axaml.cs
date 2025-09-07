@@ -11,7 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace AvaloniaApplication1;
 
-public partial class App : Application
+public class App : Application
 {
     private DateTime _lastClick = DateTime.MinValue;
     // Double-click práh – dolaď podle platformy/požadavků (typicky 300–500 ms)
@@ -20,7 +20,11 @@ public partial class App : Application
     private WindowState _lastWindowState = WindowState.Normal;
 
     public Action<ServiceCollection>? RegisterPlatformServices;
-    public IServiceProvider Services { get; set; } = default!;
+    
+    /// <summary>
+    /// Gets the <see cref="IServiceProvider"/> instance to resolve application services.
+    /// </summary>
+    public IServiceProvider? Services { get; private set; }
     
     public override void Initialize()
     {
@@ -28,6 +32,72 @@ public partial class App : Application
     }
 
     public override void OnFrameworkInitializationCompleted()
+    {
+        CreateServiceProvider();
+        MainViewModel vm = GetViewModel();
+
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.MainWindow = new MainWindow
+            {
+                DataContext = vm,
+            };
+
+            HandleWindowClosing(desktop);
+            ManageWindowStateChanges(desktop);
+        }
+        else if (ApplicationLifetime is ISingleViewApplicationLifetime singleViewPlatform)
+        {
+            singleViewPlatform.MainView = new MainView
+            {
+                DataContext = vm
+            };
+        }
+
+        base.OnFrameworkInitializationCompleted();
+    }
+
+    private void HandleWindowClosing(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        if (desktop.MainWindow != null)
+            desktop.MainWindow.Closing += (s, e) =>
+            {
+                Window window = (Window)s!;
+                window.WindowState = WindowState.Minimized;
+                window.ShowInTaskbar = false;
+                e.Cancel = true; // Zabrání skutečnému zavření okna
+            };
+    }
+
+     private void ManageWindowStateChanges(IClassicDesktopStyleApplicationLifetime desktop)
+     {
+         if (desktop.MainWindow != null)
+             desktop.MainWindow.PropertyChanged += (s, e) =>
+             {
+                 if (e.Property != Window.WindowStateProperty) return;
+
+                 var window = (Window)s!;
+                 var state = window.WindowState;
+
+                 if (state == WindowState.Normal)
+                     _lastWindowPosition = window.Position;
+
+                 if (state != WindowState.Minimized)
+                     _lastWindowState = state;
+
+                 window.ShowInTaskbar = state != WindowState.Minimized;
+             };
+     }
+
+    private MainViewModel GetViewModel()
+    {
+        if(Services == null)
+            throw new InvalidOperationException("Services not initialized.");
+        
+        return Services.GetRequiredService<MainViewModel>();
+    }
+    
+    private void CreateServiceProvider()
     {
         // // If you use CommunityToolkit, line below is needed to remove Avalonia data validation.
         // // Without this line you will get duplicate validations from both Avalonia and CT
@@ -41,60 +111,8 @@ public partial class App : Application
         
         // Creates a ServiceProvider containing services from the provided IServiceCollection
         Services = collection.BuildServiceProvider();
-        
-        MainViewModel vm = Services.GetRequiredService<MainViewModel>();
-        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-        {
-            desktop.MainWindow = new MainWindow
-            {
-                DataContext = vm,
-            };
-            
-            desktop.MainWindow.Closing += (s, e) =>
-            {
-                Window window = (Window)s!;
-                window.WindowState = WindowState.Minimized;
-                window.ShowInTaskbar = false;
-                e.Cancel = true; // Zabrání skutečnému zavření okna
-            };
-            
-            // Minimalizace okna a skrytí z hlavního panelu
-            desktop.MainWindow.PropertyChanged += (s, e) =>
-            {
-                if (e.Property == Window.WindowStateProperty)
-                {
-                    Window window = (Window)s!;
-                    // Ulož pozici pouze pokud je okno v normálním stavu
-                    if (window.WindowState == WindowState.Normal)
-                    {
-                        _lastWindowPosition = window.Position;
-                    }
-
-                    if (window.WindowState != WindowState.Minimized)
-                    {
-                        // Ulož poslední stav okna
-                        _lastWindowState = window.WindowState;
-                    }
-
-                    // Při minimalizaci skryj okno ze stavového řádku
-                    if (window.WindowState == WindowState.Minimized)
-                    {
-                        window.ShowInTaskbar = false;
-                    }
-                }
-            };
-        }
-        else if (ApplicationLifetime is ISingleViewApplicationLifetime singleViewPlatform)
-        {
-            singleViewPlatform.MainView = new MainView
-            {
-                DataContext = vm
-            };
-        }
-
-        base.OnFrameworkInitializationCompleted();
     }
-
+    
     private void TrayIcon_Clicked(object? sender, EventArgs e)
     {
         DateTime now = DateTime.Now;
@@ -118,9 +136,9 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             // Získání hlavního okna
-            var mainWindow = desktop.MainWindow;
+            Window? mainWindow = desktop.MainWindow;
 
-            if (mainWindow != null)
+            if (mainWindow != null && mainWindow.WindowState == WindowState.Minimized)
             {
                 // Obnovení okna a jeho zobrazení
                 mainWindow.WindowState = _lastWindowState;
@@ -138,7 +156,8 @@ public partial class App : Application
 
     private void Option2_Clicked(object? sender, EventArgs e)
     {
-        var notification = Services.GetRequiredService<ISystemNotificationService>();
-        notification.ShowNotification("Option 2 clicked", "Hello, world!");
+        var notification = Services?.GetRequiredService<ISystemNotificationService>();
+        if (notification != null) 
+            notification.ShowNotification("Option 2 clicked", "Hello, world!");
     }
 }
